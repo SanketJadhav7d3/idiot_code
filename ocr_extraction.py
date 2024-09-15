@@ -7,12 +7,15 @@ import os
 import sys
 import numpy as np
 import re
+import requests
+from PIL import Image
 
 
 engine = RapidOCR(det_use_cuda=True)
 
 def image_ocr(path):
-    result,elapse = engine(path)
+    img = Image.open(requests.get(path, stream=True).raw)
+    result,elapse = engine(img)
     _,text,_ = list(zip(*result))
     return " ".join(text)
 
@@ -38,11 +41,14 @@ if file_part_idx not in range(0, 13):
 print("\n\n" + "=" * 3 + " Creating log files directory" + "=" * 3 + "\n\n")
 logs_dir = "./logs"
 
-def extract_the_last_index(file):
+def extract_the_last_index(file_path):
     '''
         gets the index of the last ocr extracted record
     '''
+    file = open(file_path, 'r')
+    
     lines = file.readlines()
+
     pattern = r'\[(.*?)\]'
     
     if lines:
@@ -65,14 +71,18 @@ start_index = 0
 log_file_path = os.path.join(logs_dir, f"logs_{file_part_idx}.txt")
 
 if os.path.exists(log_file_path):
-    log_file = open(log_file_path, 'r+')
+    # if log file exists open it in append and read mode
+    # read the last record
+    # and append new records saved
     print(f"{log_file_path} detected")
 else:
     # w+ to create a file and have read and write
-    log_file = open(log_file_path, 'w+')
     print(f"The log file '{log_file_path}' did not exist and has been created.")
 
-start_index = extract_the_last_index(log_file)
+log_file = open(log_file_path, 'a+')
+
+
+start_index = extract_the_last_index(log_file_path) 
 
 print("\n\n" + "=" * 3 + f" Starting index from {start_index} " + "=" * 3 + "\n\n")
 
@@ -80,7 +90,7 @@ print("\n\n" + "=" * 3 + f" Starting index from {start_index} " + "=" * 3 + "\n\
 
 # read partitioned csv
 partitions_dir = './partitions'
-partitions_dir_with_ocr = './partitions-ocr'
+partitions_dir_with_ocr = './partitions'
 
 # create partitions dir with ocr 
 if not os.path.exists(partitions_dir_with_ocr):
@@ -98,19 +108,28 @@ df = pd.read_csv(os.path.join(partitions_dir, f"partition_{file_part_idx}.csv"))
 #df['ocr_text'] = np.nan
 
 # go through each row and append its ocr text in ocr_text column
-for index, row in df.iloc[start_index:].iterrows():
-    file_name = row['file_name']
-    file_path = os.path.join(img_saved_dir_path, file_name)
+try:
+    for index, row in df.iloc[start_index:].iterrows():
 
-    ocr_text = image_ocr(file_path)
+        image_link = row['image_link']
 
-    df.at[index, 'ocr_text'] = ocr_text
+        #file_path = os.path.join(img_saved_dir_path, file_name)
 
-    # write in log files
-    log_file.write("OCR for [" + str(index) + "]\n")
+        ocr_text = image_ocr(image_link)
 
-    if index % 10 == 0:
-        print(f"Saved till {index}")
-        df.to_csv(os.path.join(partitions_dir_with_ocr, f"partition_{file_part_idx}.csv"))
+        df.at[index, 'ocr_text'] = ocr_text
 
-print(df)
+        # write in log files
+        log_file.write(f"OCR for [{index}] : image link: {image_link}\n")
+
+        if index % 10 == 0:
+            print(f"Saved till {index}")
+            df.to_csv(os.path.join(partitions_dir_with_ocr, f"partition_{file_part_idx}.csv"), index=False)
+
+except KeyboardInterrupt:
+    log_file.close()
+    df.to_csv(os.path.join(partitions_dir_with_ocr, f"partition_{file_part_idx}.csv"), index=False)
+    print(f"\nCtrl+C detected. Saving log file and csv parititon_{file_part_idx}.csv till index {index}")
+
+
+print('\n\n' + '=' * 3 + f"Log file closed" + "=" * 3 + '\n\n')
